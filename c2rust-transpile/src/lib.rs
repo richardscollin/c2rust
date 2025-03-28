@@ -81,7 +81,7 @@ pub struct TranspilerConfig {
     pub translate_fn_macros: bool,
     pub disable_refactoring: bool,
     pub preserve_unused_functions: bool,
-    pub log_level: log::LevelFilter,
+    pub log_level: Option<log::LevelFilter>,
 
     // Options that control build files
     /// Emit `Cargo.toml` and `lib.rs`
@@ -259,7 +259,10 @@ pub fn create_temp_compile_commands(sources: &[PathBuf]) -> PathBuf {
 /// Main entry point to transpiler. Called from CLI tools with the result of
 /// clap::App::get_matches().
 pub fn transpile(tcfg: TranspilerConfig, cc_db: &Path, extra_clang_args: &[&str]) {
-    diagnostics::init(tcfg.enabled_warnings.clone(), tcfg.log_level);
+    diagnostics::init(
+        tcfg.enabled_warnings.clone(),
+        tcfg.log_level.unwrap_or(log::LevelFilter::Off),
+    );
 
     let build_dir = get_build_dir(&tcfg, cc_db);
 
@@ -460,7 +463,7 @@ fn reorganize_definitions(
     Ok(())
 }
 
-fn transpile_single(
+pub fn transpile_single(
     tcfg: &TranspilerConfig,
     input_path: PathBuf,
     ancestor_path: &Path,
