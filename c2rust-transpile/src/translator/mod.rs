@@ -876,7 +876,7 @@ pub fn translate(
             all_items.extend(new_uses.into_items());
 
             if !foreign_items.is_empty() {
-                all_items.push(mk().extern_("C").foreign_items(foreign_items));
+                all_items.push(mk().unsafe_().extern_("C").foreign_items(foreign_items));
             }
 
             // Add the items accumulated
