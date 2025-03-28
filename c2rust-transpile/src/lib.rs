@@ -19,7 +19,7 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use crate::compile_cmds::CompileCmd;
+pub use crate::compile_cmds::CompileCmd;
 use failure::Error;
 use itertools::Itertools;
 use log::{info, warn};
@@ -484,6 +484,26 @@ pub fn transpile_single(
         return Err(());
     }
 
+    let (translated_string, pragmas, crates) =
+        transpile_single_to_buffer(tcfg, input_path, cc_db, extra_clang_args)?;
+
+    std::fs::write(&output_path, &translated_string).unwrap_or_else(|err| {
+        panic!(
+            "Unable to write file {}. Reason: {}",
+            output_path.display(),
+            err
+        )
+    });
+
+    Ok((output_path, pragmas, crates))
+}
+
+pub fn transpile_single_to_buffer(
+    tcfg: &TranspilerConfig,
+    input_path: PathBuf,
+    cc_db: &Path,
+    extra_clang_args: &[&str],
+) -> Result<(String, PragmaVec, CrateSet), ()> {
     let file = input_path.file_name().unwrap().to_str().unwrap();
     if !input_path.exists() {
         warn!(
@@ -542,28 +562,11 @@ pub fn transpile_single(
     }
 
     // Perform the translation
-    let (translated_string, pragmas, crates) =
-        translator::translate(typed_context, tcfg, input_path);
-
-    let mut file = match File::create(&output_path) {
-        Ok(file) => file,
-        Err(e) => panic!(
-            "Unable to open file {} for writing: {}",
-            output_path.display(),
-            e
-        ),
-    };
-
-    match file.write_all(translated_string.as_bytes()) {
-        Ok(()) => (),
-        Err(e) => panic!(
-            "Unable to write translation to file {}: {}",
-            output_path.display(),
-            e
-        ),
-    };
-
-    Ok((output_path, pragmas, crates))
+    Ok(translator::translate(
+        typed_context.into(),
+        tcfg,
+        input_path,
+    ))
 }
 
 fn get_output_path(
