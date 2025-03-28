@@ -1091,7 +1091,7 @@ fn arrange_header(t: &Translation, is_binary: bool) -> (Vec<syn::Attribute>, Vec
 
 /// Convert a boolean expression to a c_int
 fn bool_to_int(val: Box<Expr>) -> Box<Expr> {
-    mk().cast_expr(val, mk().path_ty(vec!["libc", "c_int"]))
+    mk().cast_expr(val, mk().path_ty(vec!["core", "ffi", "c_int"]))
 }
 
 /// Add a src_loc = "line:col" attribute to an item/foreign_item
@@ -3273,7 +3273,7 @@ impl<'c> Translation<'c> {
                     UnTypeOp::PreferredAlignOf => self.compute_align_of_type(arg_ty.ctype, true)?,
                 };
 
-                Ok(result.map(|x| mk().cast_expr(x, mk().path_ty(vec!["libc", "c_ulong"]))))
+                Ok(result.map(|x| mk().cast_expr(x, mk().path_ty(vec!["core", "ffi", "c_ulong"]))))
             }
 
             ConstantExpr(_ty, child, value) => {
@@ -4285,7 +4285,8 @@ impl<'c> Translation<'c> {
                 } else if target_ty_ctype.is_pointer() && source_ty_kind.is_bool() {
                     val.and_then(|x| {
                         Ok(WithStmts::new_val(mk().cast_expr(
-                            mk().cast_expr(x, mk().path_ty(vec!["libc", "size_t"])),
+                            // TODO use core::ffi::c_size_t if it ever stabilizes
+                            mk().cast_expr(x, mk().path_ty(vec!["usize"])),
                             target_ty,
                         )))
                     })
