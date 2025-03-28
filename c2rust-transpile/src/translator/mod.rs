@@ -509,7 +509,8 @@ pub fn translate(
     };
 
     {
-        t.use_crate(ExternCrate::Libc);
+        // disable using libc, so we can be used without requiring libc crate
+        // t.use_crate(ExternCrate::Libc);
 
         // Sort the top-level declarations by file and source location so that we
         // preserve the ordering of all declarations in each file.
@@ -809,10 +810,10 @@ pub fn translate(
                     tcfg.reorganize_definitions,
                 );
                 let comments = t.comment_context.get_remaining_comments(*file_id);
-                submodule.set_span(match t.comment_store.borrow_mut().add_comments(&comments) {
-                    Some(pos) => submodule.span().with_hi(pos),
-                    None => submodule.span(),
-                });
+                // submodule.set_span(match t.comment_store.borrow_mut().add_comments(&comments) {
+                //     Some(pos) => submodule.span().with_hi(pos),
+                //     None => submodule.span(),
+                // });
                 mod_items.push(submodule);
             }
         }
