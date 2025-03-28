@@ -3,7 +3,7 @@ use log::LevelFilter;
 use regex::Regex;
 use std::{fs, path::PathBuf};
 
-use c2rust_transpile::{Diagnostic, ReplaceMode, TranspilerConfig};
+use c2rust_transpile::{Diagnostic, ReplaceMode, RustEdition, TranspilerConfig};
 
 #[derive(Debug, Parser)]
 #[clap(
@@ -215,7 +215,8 @@ fn main() {
         replace_unsupported_decls: ReplaceMode::Extern,
         emit_no_std: args.emit_no_std,
         enabled_warnings: args.warn.into_iter().collect(),
-        log_level: args.log_level,
+        max_rust_edition: RustEdition::Edition2021,
+        log_level: Some(args.log_level),
     };
     // binaries imply emit-build-files
     if !tcfg.binaries.is_empty() {

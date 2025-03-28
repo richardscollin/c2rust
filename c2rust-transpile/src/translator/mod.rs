@@ -23,6 +23,7 @@ use crate::rust_ast::item_store::ItemStore;
 use crate::rust_ast::set_span::SetSpan;
 use crate::rust_ast::{pos_to_span, SpanExt};
 use crate::translator::named_references::NamedReference;
+use crate::RustEdition;
 use c2rust_ast_builder::{mk, properties::*, Builder};
 use c2rust_ast_printer::pprust::{self};
 
@@ -387,17 +388,22 @@ pub fn stmts_block(mut stmts: Vec<Stmt>) -> Block {
 }
 
 /// Generate link attributes needed to ensure that the generated Rust libraries have the right symbol values.
-fn mk_linkage(in_extern_block: bool, new_name: &str, old_name: &str) -> Builder {
+fn mk_linkage(
+    edition: RustEdition,
+    in_extern_block: bool,
+    new_name: &str,
+    old_name: &str,
+) -> Builder {
     if new_name == old_name {
         if in_extern_block {
             mk() // There is no mangling by default in extern blocks anymore
         } else {
-            mk().call_attr("unsafe", vec!["no_mangle"]) // Don't touch my name Rust!
+            mk_unsafe_single_attr(edition, "no_mangle") // Don't touch my name Rust!
         }
     } else if in_extern_block {
-        mk().str_attr("link_name", old_name) // Look for this name
+        mk_unsafe_str_attr(edition, "link_name", old_name) // Look for this name
     } else {
-        mk().str_attr("export_name", old_name) // Make sure you actually name it this
+        mk_unsafe_str_attr(edition, "export_name", old_name) // Make sure you actually name it this
     }
 }
 
@@ -1020,7 +1026,7 @@ fn make_submodule(
     }
 
     if !foreign_items.is_empty() {
-        items.push(mk().extern_("C").foreign_items(foreign_items));
+        items.push(mk().unsafe_().extern_("C").foreign_items(foreign_items));
     }
 
     let module_builder = mk().vis("pub");
@@ -1152,6 +1158,24 @@ pub(crate) fn unparen(expr: &Expr) -> &Expr {
     match *expr {
         Expr::Paren(ExprParen { ref expr, .. }) => expr,
         _ => expr,
+    }
+}
+
+pub fn mk_unsafe_single_attr(edition: RustEdition, key: &str) -> Builder {
+    match edition {
+        RustEdition::Edition2021 => mk().single_attr(key),
+        RustEdition::Edition2024 => mk().call_attr("unsafe", vec![key]),
+    }
+}
+
+pub fn mk_unsafe_str_attr(edition: RustEdition, key: &str, value: &str) -> Builder {
+    match edition {
+        RustEdition::Edition2021 => mk().str_attr(key, value),
+        RustEdition::Edition2024 => {
+            // todo!("not possible with syn 1, seems easier with syn 2"), // mk().call_attr("unsafe", vec![value]),
+            // for now just emit the same as Edition2021
+            mk().str_attr(key, value)
+        }
     }
 }
 
@@ -2004,10 +2028,11 @@ impl<'c> Translation<'c> {
                 } else {
                     ""
                 };
-                let mut extern_item = mk_linkage(true, &new_name, ident)
-                    .span(span)
-                    .set_mutbl(mutbl)
-                    .vis(visibility);
+                let mut extern_item =
+                    mk_linkage(self.tcfg.max_rust_edition, true, &new_name, ident)
+                        .span(span)
+                        .set_mutbl(mutbl)
+                        .vis(visibility);
                 if has_thread_duration {
                     extern_item = extern_item.single_attr("thread_local");
                 }
@@ -2094,7 +2119,9 @@ impl<'c> Translation<'c> {
                 };
 
                 let static_def = if is_externally_visible {
-                    mk_linkage(false, new_name, ident).pub_().extern_("C")
+                    mk_linkage(self.tcfg.max_rust_edition, false, new_name, ident)
+                        .pub_()
+                        .extern_("C")
                 } else if self.cur_file.borrow().is_some() {
                     mk().pub_()
                 } else {
@@ -2368,11 +2395,14 @@ impl<'c> Translation<'c> {
                 let mut mk_ = if is_main {
                     mk()
                 } else if (is_global && !is_inline) || is_extern_inline {
-                    mk_linkage(false, new_name, name).extern_("C").pub_()
+                    mk_linkage(self.tcfg.max_rust_edition, false, new_name, name)
+                        .unsafe_()
+                        .extern_("C")
+                        .pub_()
                 } else if self.cur_file.borrow().is_some() {
-                    mk().extern_("C").pub_()
+                    mk().unsafe_().extern_("C").pub_()
                 } else {
-                    mk().extern_("C")
+                    mk().unsafe_().extern_("C")
                 };
 
                 for attr in attrs {
@@ -2423,7 +2453,9 @@ impl<'c> Translation<'c> {
                     ""
                 };
 
-                let mut mk_ = mk_linkage(true, new_name, name).span(span).vis(visibility);
+                let mut mk_ = mk_linkage(self.tcfg.max_rust_edition, true, new_name, name)
+                    .span(span)
+                    .vis(visibility);
 
                 for attr in attrs {
                     mk_ = match attr {
@@ -2809,7 +2841,7 @@ impl<'c> Translation<'c> {
                     let items = match self.convert_decl(ctx, decl_id)? {
                         Item(item) => vec![item],
                         ForeignItem(item) => {
-                            vec![mk().extern_("C").foreign_items(vec![*item])]
+                            vec![mk().unsafe_().extern_("C").foreign_items(vec![*item])]
                         }
                         Items(items) => items,
                         NoItem => return Ok(cfg::DeclStmtInfo::empty()),

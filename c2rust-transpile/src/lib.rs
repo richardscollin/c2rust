@@ -42,6 +42,12 @@ type PragmaSet = indexmap::IndexSet<(&'static str, &'static str)>;
 type CrateSet = indexmap::IndexSet<ExternCrate>;
 type TranspileResult = Result<(PathBuf, PragmaVec, CrateSet), ()>;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RustEdition {
+    Edition2021,
+    Edition2024,
+}
+
 /// Configuration settings for the translation process
 #[derive(Debug)]
 pub struct TranspilerConfig {
@@ -81,6 +87,7 @@ pub struct TranspilerConfig {
     pub translate_fn_macros: bool,
     pub disable_refactoring: bool,
     pub preserve_unused_functions: bool,
+    pub max_rust_edition: RustEdition,
     pub log_level: Option<log::LevelFilter>,
 
     // Options that control build files
