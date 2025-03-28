@@ -1,6 +1,6 @@
 [package]
-name = "c2rust-transpile"
-version.workspace = true
+name = "include_c2rust-transpile"
+version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
 description = "C2Rust transpiler implementation"
