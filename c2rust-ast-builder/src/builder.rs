@@ -7,12 +7,6 @@ use std::default::Default;
 use std::iter::FromIterator;
 use syn::{__private::ToTokens, punctuated::Punctuated, *};
 
-/// a MetaItem that has already been turned into tokens in preparation for being added as an attribute
-pub struct PreparedMetaItem {
-    pub path: Path,
-    pub tokens: TokenStream,
-}
-
 pub mod properties {
     use syn::Token;
 
@@ -32,6 +26,15 @@ pub mod properties {
             match self {
                 Mutability::Mutable => Some(Default::default()),
                 Mutability::Immutable => None,
+            }
+        }
+    }
+
+    impl Mutability {
+        pub fn to_static_mutability(&self, span: proc_macro2::Span) -> syn::StaticMutability {
+            match self {
+                Mutability::Mutable => syn::StaticMutability::Mut(Token![mut](span)),
+                Mutability::Immutable => syn::StaticMutability::None,
             }
         }
     }
@@ -115,7 +118,7 @@ pub mod properties {
 use self::properties::*;
 
 pub type FnDecl = (Ident, Vec<FnArg>, Option<Variadic>, ReturnType);
-pub type BareFnTyParts = (Vec<BareFnArg>, Option<Variadic>, ReturnType);
+pub type BareFnTyParts = (Vec<BareFnArg>, Option<BareVariadic>, ReturnType);
 
 pub enum CaptureBy {
     Value,
@@ -206,13 +209,8 @@ impl<'a> Make<Path> for &'a str {
 impl<'a> Make<Visibility> for &'a str {
     fn make(self, mk_: &Builder) -> Visibility {
         match self {
-            "pub" => Visibility::Public(VisPublic {
-                pub_token: Token![pub](mk_.span),
-            }),
+            "pub" => Visibility::Public(Token![pub](mk_.span)),
             "priv" | "" | "inherit" => Visibility::Inherited,
-            "crate" => Visibility::Crate(VisCrate {
-                crate_token: Token![crate](mk_.span),
-            }),
             "pub(crate)" => Visibility::Restricted(VisRestricted {
                 pub_token: Token![pub](mk_.span),
                 paren_token: token::Paren(mk_.span),
@@ -360,18 +358,6 @@ impl Make<GenericArgument> for Lifetime {
     }
 }
 
-impl Make<NestedMeta> for Meta {
-    fn make(self, _mk: &Builder) -> NestedMeta {
-        NestedMeta::Meta(self)
-    }
-}
-
-impl Make<NestedMeta> for Lit {
-    fn make(self, _mk: &Builder) -> NestedMeta {
-        NestedMeta::Lit(self)
-    }
-}
-
 impl Make<Lit> for String {
     fn make(self, mk: &Builder) -> Lit {
         Lit::Str(LitStr::new(&self, mk.span))
@@ -476,8 +462,8 @@ impl Builder {
     }
 
     pub fn pub_(self) -> Self {
-        let pub_token = Token![pub](self.span);
-        self.vis(Visibility::Public(VisPublic { pub_token }))
+        let tok = Token![pub](self.span);
+        self.vis(Visibility::Public(tok))
     }
 
     pub fn set_mutbl<M: Make<Mutability>>(self, mutbl: M) -> Self {
@@ -522,74 +508,8 @@ impl Builder {
         self
     }
 
-    pub fn prepare_meta_namevalue(&self, mnv: MetaNameValue) -> PreparedMetaItem {
-        let mut tokens = TokenStream::new();
-        mnv.eq_token.to_tokens(&mut tokens);
-        mnv.lit.to_tokens(&mut tokens);
-
-        PreparedMetaItem {
-            path: mnv.path,
-            tokens,
-        }
-    }
-
-    pub fn prepare_meta_list(&self, list: MetaList) -> PreparedMetaItem {
-        let mut tokens = TokenStream::new();
-        let comma_token = Token![,](self.span);
-        let mut it = list.nested.into_iter();
-        if let Some(value) = it.next() {
-            value.to_tokens(&mut tokens);
-        }
-        for value in it {
-            comma_token.to_tokens(&mut tokens);
-            value.to_tokens(&mut tokens);
-        }
-        let tokens = proc_macro2::TokenTree::Group(proc_macro2::Group::new(
-            proc_macro2::Delimiter::Parenthesis,
-            tokens,
-        ))
-        .into();
-
-        PreparedMetaItem {
-            path: list.path,
-            tokens,
-        }
-    }
-
-    pub fn prepare_meta_path<I>(&self, path: I) -> PreparedMetaItem
-    where
-        I: Make<Path>,
-    {
-        let path = path.make(self);
-        PreparedMetaItem {
-            path,
-            tokens: TokenStream::new(),
-        }
-    }
-
-    pub fn prepare_meta(&self, kind: Meta) -> PreparedMetaItem {
-        match kind {
-            Meta::List(ml) => self.prepare_meta_list(ml),
-            Meta::NameValue(mnv) => self.prepare_meta_namevalue(mnv),
-            Meta::Path(path) => self.prepare_meta_path(path),
-        }
-    }
-
-    pub fn prepare_nested_meta_item<I>(&self, path: I, kind: Meta) -> PreparedMetaItem
-    where
-        I: Make<Path>,
-    {
-        let path = path.make(self);
-        PreparedMetaItem {
-            path,
-            tokens: kind.to_token_stream(),
-        }
-    }
-
-    pub fn prepared_attr(self, prepared: PreparedMetaItem) -> Self {
-        let attr = self
-            .clone()
-            .attribute(AttrStyle::Outer, prepared.path, prepared.tokens);
+    pub fn prepared_attr(self, meta: Meta) -> Self {
+        let attr = self.clone().attribute(AttrStyle::Outer, meta);
         let mut attrs = self.attrs;
         attrs.push(attr);
         Builder { attrs, ..self }
@@ -598,7 +518,7 @@ impl Builder {
     pub fn str_attr<K, V>(self, key: K, value: V) -> Self
     where
         K: Make<Path>,
-        V: Make<Lit>,
+        V: Make<Expr>,
     {
         let key = key.make(&self);
         let value = value.make(&self);
@@ -606,18 +526,17 @@ impl Builder {
         let mnv = MetaNameValue {
             path: key,
             eq_token: Token![=](self.span),
-            lit: value,
+            value,
         };
-        let prepared = self.prepare_meta_namevalue(mnv);
-        self.prepared_attr(prepared)
+        self.prepared_attr(Meta::NameValue(mnv))
     }
 
     pub fn single_attr<K>(self, key: K) -> Self
     where
         K: Make<PathSegment>,
     {
-        let prepared = self.prepare_meta_path(vec![key]);
-        self.prepared_attr(prepared)
+        let path: Path = vec![key].make(&self);
+        self.prepared_attr(Meta::Path(path))
     }
 
     pub fn call_attr<K, V>(self, func: K, arguments: Vec<V>) -> Self
@@ -628,16 +547,15 @@ impl Builder {
         let func: Path = vec![func].make(&self);
         let arguments = arguments
             .into_iter()
-            .map(|x| NestedMeta::Meta(Meta::Path(vec![x.make(&self)].make(&self))))
+            .map(|x| TokenTree::Ident(x.make(&self)))
             .collect();
 
         let metalist = MetaList {
             path: func,
-            paren_token: token::Paren(self.span),
-            nested: arguments,
+            delimiter: MacroDelimiter::Paren(token::Paren(self.span)),
+            tokens: arguments,
         };
-        let prepared = self.prepare_meta_list(metalist);
-        self.prepared_attr(prepared)
+        self.prepared_attr(Meta::List(metalist))
     }
 
     // Path segments with parameters
@@ -764,27 +682,12 @@ impl Builder {
             .map(|arg| arg.make(&self))
             .collect();
 
-        // Convert ::<> if present in seg
-        fn generic_arg_to_method_generic_arg(a: GenericArgument) -> GenericMethodArgument {
-            match a {
-                GenericArgument::Type(t) => GenericMethodArgument::Type(t),
-                GenericArgument::Const(c) => GenericMethodArgument::Const(c),
-                _ => panic!(
-                    "non-type-or-const generic argument found in method arguments: {:?}",
-                    a
-                ),
-            }
-        }
         let turbofish = match seg.arguments {
             PathArguments::None => None,
-            PathArguments::AngleBracketed(ab) => Some(MethodTurbofish {
-                colon2_token: ab.colon2_token.unwrap_or_default(),
+            PathArguments::AngleBracketed(ab) => Some(AngleBracketedGenericArguments {
+                colon2_token: ab.colon2_token,
                 lt_token: ab.lt_token,
-                args: ab
-                    .args
-                    .into_iter()
-                    .map(generic_arg_to_method_generic_arg)
-                    .collect(),
+                args: ab.args,
                 gt_token: ab.gt_token,
             }),
             PathArguments::Parenthesized(_) => {
@@ -861,15 +764,6 @@ impl Builder {
         })))
     }
 
-    pub fn type_expr(self, e: Box<Expr>, t: Box<Type>) -> Box<Expr> {
-        Box::new(Expr::Type(ExprType {
-            attrs: self.attrs,
-            colon_token: Token![:](self.span),
-            expr: e,
-            ty: t,
-        }))
-    }
-
     pub fn unsafe_block_expr(self, unsafe_blk: ExprUnsafe) -> Box<Expr> {
         Box::new(Expr::Unsafe(unsafe_blk))
     }
@@ -903,8 +797,9 @@ impl Builder {
         }))
     }
 
+    #[deprecated]
     pub fn assign_op_expr(self, op: BinOp, lhs: Box<Expr>, rhs: Box<Expr>) -> Box<Expr> {
-        Box::new(Expr::AssignOp(ExprAssignOp {
+        Box::new(Expr::Binary(ExprBinary {
             attrs: self.attrs,
             op,
             left: lhs,
@@ -980,7 +875,6 @@ impl Builder {
         Box::new(parenthesize_if_necessary(Expr::Reference(ExprReference {
             attrs: self.attrs,
             and_token: Token![&](self.span),
-            raw: Default::default(),
             mutability: self.mutbl.to_token(),
             expr: e,
         })))
@@ -1000,6 +894,7 @@ impl Builder {
         let path = path.make(&self);
         Box::new(Expr::Struct(ExprStruct {
             attrs: self.attrs,
+            qself: None,
             brace_token: token::Brace(self.span),
             dot2_token: None,
             path,
@@ -1021,6 +916,7 @@ impl Builder {
         let path = path.make(&self);
         Box::new(Expr::Struct(ExprStruct {
             attrs: self.attrs,
+            qself: None,
             brace_token: token::Brace(self.span),
             dot2_token: Some(Token![..](self.span)),
             path,
@@ -1188,7 +1084,13 @@ impl Builder {
         }))
     }
 
-    pub fn for_expr<I>(self, pat: Pat, expr: Box<Expr>, body: Block, label: Option<I>) -> Box<Expr>
+    pub fn for_expr<I>(
+        self,
+        pat: Box<Pat>,
+        expr: Box<Expr>,
+        body: Block,
+        label: Option<I>,
+    ) -> Box<Expr>
     where
         I: Make<Ident>,
     {
@@ -1213,26 +1115,26 @@ impl Builder {
 
     // Patterns
 
-    pub fn ident_pat<I>(self, name: I) -> Pat
+    pub fn ident_pat<I>(self, name: I) -> Box<Pat>
     where
         I: Make<Ident>,
     {
         let name = name.make(&self);
-        Pat::Ident(PatIdent {
+        Box::new(Pat::Ident(PatIdent {
             attrs: self.attrs,
             mutability: self.mutbl.to_token(),
             by_ref: None,
             ident: name,
             subpat: None,
-        })
+        }))
     }
 
-    pub fn tuple_pat(self, pats: Vec<Pat>) -> Pat {
-        Pat::Tuple(PatTuple {
+    pub fn tuple_pat(self, pats: Vec<Pat>) -> Box<Pat> {
+        Box::new(Pat::Tuple(PatTuple {
             attrs: self.attrs,
             paren_token: token::Paren(self.span),
             elems: punct(pats),
-        })
+        }))
     }
 
     pub fn qpath_pat<Pa>(self, qself: Option<QSelf>, path: Pa) -> Box<Pat>
@@ -1254,10 +1156,10 @@ impl Builder {
         })
     }
 
-    pub fn lit_pat(self, lit: Box<Expr>) -> Pat {
+    pub fn lit_pat(self, lit: Lit) -> Pat {
         Pat::Lit(PatLit {
             attrs: self.attrs,
-            expr: lit,
+            lit,
         })
     }
 
@@ -1421,11 +1323,11 @@ impl Builder {
     }
 
     pub fn expr_stmt(self, expr: Box<Expr>) -> Stmt {
-        Stmt::Expr(*expr)
+        Stmt::Expr(*expr, None)
     }
 
     pub fn semi_stmt(self, expr: Box<Expr>) -> Stmt {
-        Stmt::Semi(*expr, Token![;](self.span))
+        Stmt::Expr(*expr, Some(Token![;](self.span)))
     }
 
     pub fn item_stmt(self, item: Box<Item>) -> Stmt {
@@ -1446,7 +1348,7 @@ impl Builder {
         Box::new(Item::Static(ItemStatic {
             attrs: self.attrs,
             vis: self.vis,
-            mutability: self.mutbl.to_token(),
+            mutability: self.mutbl.to_static_mutability(self.span),
             ident: name,
             static_token: Token![static](self.span),
             colon_token: Token![:](self.span),
@@ -1470,6 +1372,7 @@ impl Builder {
             eq_token: Token![=](self.span),
             semi_token: Token![;](self.span),
             ident: name,
+            generics: Self::no_generics(),
             ty,
             expr: init,
         }))
@@ -1490,8 +1393,10 @@ impl Builder {
 
     pub fn variadic_arg(self, variadic_attrs: Vec<Attribute>) -> Variadic {
         Variadic {
-            dots: Token![...](self.span),
             attrs: variadic_attrs,
+            pat: None,
+            dots: Token![...](self.span),
+            comma: None,
         }
     }
 
@@ -1597,6 +1502,7 @@ impl Builder {
         Box::new(Item::Mod(ItemMod {
             attrs: self.attrs,
             vis: self.vis,
+            unsafety: None,
             ident: name,
             mod_token: Token![mod](self.span),
             semi: None,
@@ -1783,8 +1689,15 @@ impl Builder {
     pub fn foreign_items(self, items: Vec<ForeignItem>) -> Box<Item> {
         let abi = self.get_abi();
 
+        // TODO may want to restrict emitting unsafe here to only >= 2024 edition
+        let unsafety = match self.unsafety {
+            Unsafety::Normal => None,
+            Unsafety::Unsafe => Some(Token![unsafe](self.span)),
+        };
+
         Box::new(Item::ForeignMod(ItemForeignMod {
             attrs: self.attrs,
+            unsafety,
             brace_token: token::Brace(self.span),
             items,
             abi,
@@ -1857,10 +1770,11 @@ impl Builder {
         I: Make<Ident>,
     {
         let name = name.make(&self);
+
         Box::new(ForeignItem::Static(ForeignItemStatic {
             attrs: self.attrs,
             vis: self.vis,
-            mutability: self.mutbl.to_token(),
+            mutability: self.mutbl.to_static_mutability(self.span),
             ident: name,
             ty,
             static_token: Token![static](self.span),
@@ -1879,9 +1793,19 @@ impl Builder {
             attrs: self.attrs,
             vis: self.vis,
             ident: name,
+            generics: Self::no_generics(),
             type_token: Token![type](self.span),
             semi_token: Token![;](self.span),
         }))
+    }
+
+    fn no_generics() -> syn::Generics {
+        Generics {
+            lt_token: None,
+            params: Punctuated::new(),
+            gt_token: None,
+            where_clause: None,
+        }
     }
 
     pub fn mac_foreign_item(self, mac: Macro) -> ForeignItem {
@@ -1902,6 +1826,7 @@ impl Builder {
         Field {
             ident: Some(ident),
             vis: self.vis,
+            mutability: FieldMutability::None,
             attrs: self.attrs,
             ty: *ty,
             colon_token: Some(Token![:](self.span)),
@@ -1912,6 +1837,7 @@ impl Builder {
         Field {
             ident: None,
             vis: self.vis,
+            mutability: FieldMutability::None,
             ty: *ty,
             attrs: self.attrs,
             colon_token: None,
@@ -1980,7 +1906,7 @@ impl Builder {
         })
     }
 
-    pub fn self_arg(self, kind: SelfKind) -> FnArg {
+    pub fn self_arg(self, kind: SelfKind, ty: Box<Type>) -> FnArg {
         let (reference, mutability) = match kind {
             SelfKind::Value(mutability) => (None, mutability),
             SelfKind::Region(lt, mutability) => {
@@ -1993,6 +1919,8 @@ impl Builder {
             reference,
             mutability: mutability.to_token(),
             self_token: Token![self](self.span),
+            colon_token: Some(Token![:](self.span)),
+            ty,
         })
     }
 
@@ -2020,11 +1948,11 @@ impl Builder {
         L: Make<Lifetime>,
     {
         let lifetime = lifetime.make(&self);
-        GenericParam::Lifetime(LifetimeDef {
+        GenericParam::Lifetime(LifetimeParam {
             attrs: self.attrs,
             lifetime,
             colon_token: None,
-            bounds: punct(vec![]),
+            bounds: punct::<_, Token![+]>(vec![]),
         })
     }
 
@@ -2032,27 +1960,22 @@ impl Builder {
         lt.make(&self)
     }
 
-    pub fn attribute<Pa, Ma>(self, style: AttrStyle, path: Pa, args: Ma) -> Attribute
+    pub fn attribute<Ma>(self, style: AttrStyle, args: Ma) -> Attribute
     where
-        Pa: Make<Path>,
-        Ma: Make<TokenStream>,
+        Ma: Make<Meta>,
     {
-        let path = path.make(&self);
         let args = args.make(&self);
+
         Attribute {
-            style,
-            path,
-            tokens: args,
             pound_token: Token![#](self.span),
+            style,
             bracket_token: token::Bracket(self.span),
+            meta: args,
         }
     }
 
-    pub fn meta_item_attr(mut self, style: AttrStyle, meta_item: Meta) -> Self {
-        let prepared = self.prepare_meta(meta_item);
-        let attr = self
-            .clone()
-            .attribute(style, prepared.path, prepared.tokens);
+    pub fn meta_item_attr(mut self, style: AttrStyle, meta: Meta) -> Self {
+        let attr = self.clone().attribute(style, meta);
         self.attrs.push(attr);
         self
     }
@@ -2065,24 +1988,23 @@ impl Builder {
         Meta::Path(path)
     }
 
-    pub fn meta_list<I, N>(self, path: I, args: N) -> Meta
+    pub fn meta_list<I, N>(self, path: I, args: Vec<TokenTree>) -> Meta
     where
         I: Make<Path>,
-        N: Make<Vec<NestedMeta>>,
     {
         let path = path.make(&self);
-        let args = args.make(&self);
+
         Meta::List(MetaList {
             path,
-            paren_token: token::Paren(self.span),
-            nested: punct(args),
+            delimiter: MacroDelimiter::Paren(token::Paren(self.span)),
+            tokens: punct::<_, Token![,]>(args).to_token_stream(),
         })
     }
 
     pub fn meta_namevalue<K, V>(self, key: K, value: V) -> Meta
     where
         K: Make<Path>,
-        V: Make<Lit>,
+        V: Make<Expr>,
     {
         let key = key.make(&self);
         let value = value.make(&self);
@@ -2090,15 +2012,8 @@ impl Builder {
         Meta::NameValue(MetaNameValue {
             path: key,
             eq_token: Token![=](self.span),
-            lit: value,
+            value,
         })
-    }
-
-    pub fn nested_meta_item<K>(self, kind: K) -> NestedMeta
-    where
-        K: Make<NestedMeta>,
-    {
-        kind.make(&self)
     }
 
     // Convert the current internal list of outer attributes
@@ -2146,7 +2061,11 @@ impl Builder {
 
     /// Create a local variable
     pub fn local(self, pat: Pat, ty: Option<Box<Type>>, init: Option<Box<Expr>>) -> Local {
-        let init = init.map(|x| (Default::default(), x));
+        let init = init.map(|x| LocalInit {
+            eq_token: Token![=](self.span),
+            expr: x,
+            diverge: None,
+        });
         let pat = if let Some(ty) = ty {
             Pat::Type(PatType {
                 attrs: vec![],
@@ -2228,6 +2147,8 @@ impl Builder {
         };
         Box::new(Expr::Closure(ExprClosure {
             attrs: self.attrs,
+            lifetimes: None,
+            constness: None,
             or1_token: Token![|](self.span),
             or2_token: Token![|](self.span),
             capture,
@@ -2275,7 +2196,7 @@ fn expr_precedence(e: &Expr) -> u8 {
         Expr::Unary(_) | Expr::Reference(_) => 13,
         Expr::Cast(_ec) => 12,
         Expr::Binary(eb) => 2 + binop_precedence(&eb.op),
-        Expr::Assign(_) | Expr::AssignOp(_) => 1,
+        Expr::Assign(_) => 1,
         Expr::Return(_) | Expr::Closure(_) => 0,
         _ => 255,
     }
@@ -2302,16 +2223,17 @@ fn binop_precedence(b: &BinOp) -> u8 {
         BinOp::Ne(_) => 3,
         BinOp::Ge(_) => 3,
         BinOp::Gt(_) => 3,
-        BinOp::AddEq(_) => 0,
-        BinOp::SubEq(_) => 0,
-        BinOp::MulEq(_) => 0,
-        BinOp::DivEq(_) => 0,
-        BinOp::RemEq(_) => 0,
-        BinOp::BitXorEq(_) => 0,
-        BinOp::BitAndEq(_) => 0,
-        BinOp::BitOrEq(_) => 0,
-        BinOp::ShlEq(_) => 0,
-        BinOp::ShrEq(_) => 0,
+        BinOp::AddAssign(_) => 0,
+        BinOp::SubAssign(_) => 0,
+        BinOp::MulAssign(_) => 0,
+        BinOp::DivAssign(_) => 0,
+        BinOp::RemAssign(_) => 0,
+        BinOp::BitXorAssign(_) => 0,
+        BinOp::BitAndAssign(_) => 0,
+        BinOp::BitOrAssign(_) => 0,
+        BinOp::ShlAssign(_) => 0,
+        BinOp::ShrAssign(_) => 0,
+        _ => u8::MAX,
     }
 }
 
