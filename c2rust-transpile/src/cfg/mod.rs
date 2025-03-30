@@ -20,7 +20,7 @@ use crate::c_ast::CLabelId;
 use crate::diagnostics::TranslationResult;
 use crate::rust_ast::SpanExt;
 use c2rust_ast_printer::pprust;
-use proc_macro2::Span;
+use proc_macro2::{Literal, Span};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -30,6 +30,7 @@ use std::io;
 use std::io::Write;
 use std::ops::Deref;
 use std::ops::Index;
+use syn::Lit;
 use syn::{spanned::Spanned, Arm, Expr, Pat, Stmt};
 
 use failure::format_err;
@@ -89,8 +90,19 @@ impl Label {
         mk().lit_expr(as_num as u128)
     }
 
+    fn to_num_lit(&self) -> Box<Lit> {
+        let mut s = DefaultHasher::new();
+        self.hash(&mut s);
+        let as_num = s.finish();
+        Box::new(Lit::new(Literal::u128_suffixed(as_num as u128)))
+    }
+
     fn to_string_expr(&self) -> Box<Expr> {
         mk().lit_expr(self.debug_print())
+    }
+
+    fn to_string_lit(&self) -> Box<Lit> {
+        Box::new(Lit::new(Literal::string(&self.debug_print())))
     }
 }
 
@@ -1835,7 +1847,8 @@ impl CfgBuilder {
                             .to_pure_expr()
                         {
                             Some(expr) => match *expr {
-                                Expr::Lit(..) | Expr::Path(..) => Some(expr),
+                                Expr::Lit(expr_lit) => Some(expr_lit.lit),
+                                Expr::Path(expr_path) => todo!("handle this properly"),
                                 _ => None,
                             },
                             _ => None,
@@ -1845,8 +1858,15 @@ impl CfgBuilder {
                 };
                 let branch = match branch {
                     Some(expr) => expr,
-                    None => translator.convert_constant(cie)?,
+                    None => {
+                        let tmp = translator.convert_constant(cie)?;
+                        match *tmp {
+                            Expr::Lit(expr_lit) => expr_lit.lit,
+                            _ => panic!("expected int lit from convert constant"),
+                        }
+                    }
                 };
+
                 self.switch_expr_cases
                     .last_mut()
                     .ok_or_else(|| {

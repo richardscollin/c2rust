@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+# default-members = ["c2rust-transpile"]
 members = [
     "analysis/runtime",
     "c2rust",
@@ -22,6 +23,9 @@ exclude = [
     "examples",
     "tests",
 ]
+
+[profile.dev]
+panic = "abort"
 
 [workspace.package]
 version = "0.20.0"

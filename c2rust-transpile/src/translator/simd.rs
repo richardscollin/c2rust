@@ -68,19 +68,17 @@ static SIMD_X86_64_ONLY: &[&str] = &[
 ];
 
 fn add_arch_use(store: &mut ItemStore, arch_name: &str, item_name: &str) {
+    // e.g.
+    // #[cfg(target_arch = "x86_64")]
+
+    let attrs = mk().meta_item_attr(
+        AttrStyle::Outer,
+        mk().meta_list("cfg", vec![mk().meta_namevalue("target_arch", arch_name)]),
+    );
     store.add_use_with_attr(
         vec!["core".into(), "arch".into(), arch_name.into()],
         item_name,
-        mk().meta_item_attr(
-            AttrStyle::Outer,
-            mk().meta_list(
-                "cfg",
-                vec![NestedMeta::Meta(
-                    mk().meta_namevalue("target_arch", arch_name),
-                )],
-            ),
-        )
-        .pub_(),
+        attrs.pub_(),
     );
 }
 

@@ -246,11 +246,11 @@ impl TypeConverter {
             Some(ret) => self.convert(ctxt, ret.ctype)?,
         };
 
-        let variadic = is_variadic.then(|| mk().variadic_arg(vec![]));
+        let bare_variadic = is_variadic.then(|| mk().bare_variadic(vec![]));
 
         let fn_ty = (
             barefn_inputs,
-            variadic,
+            bare_variadic,
             ReturnType::Type(Default::default(), output),
         );
         Ok(mk().unsafe_().extern_("C").barefn_ty(fn_ty))

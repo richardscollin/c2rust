@@ -14,8 +14,8 @@ use crate::with_stmts::WithStmts;
 use c2rust_ast_builder::mk;
 use c2rust_ast_printer::pprust;
 use syn::{
-    self, AttrStyle, BinOp as RBinOp, Expr, ExprAssign, ExprAssignOp, ExprBinary, ExprBlock,
-    ExprCast, ExprMethodCall, ExprUnary, Field, Meta, NestedMeta, Stmt, Type,
+    AttrStyle, BinOp as RBinOp, Expr, ExprAssign, ExprBinary, ExprBlock, ExprCast, ExprMethodCall,
+    ExprUnary, Field, FieldValue, Meta, MetaNameValue, Stmt, Type, TypePath,
 };
 
 use itertools::EitherOrBoth::{Both, Right};
@@ -50,9 +50,7 @@ fn contains_block(expr_kind: &Expr) -> bool {
     use Expr::*;
     match expr_kind {
         Block(..) => true,
-        Assign(ExprAssign { left, right, .. })
-        | AssignOp(ExprAssignOp { left, right, .. })
-        | Binary(ExprBinary { left, right, .. }) => {
+        Assign(ExprAssign { left, right, .. }) | Binary(ExprBinary { left, right, .. }) => {
             [left, right].iter().any(|expr| contains_block(expr))
         }
         Unary(ExprUnary { expr, .. }) | Cast(ExprCast { expr, .. }) => contains_block(expr),
@@ -61,16 +59,12 @@ fn contains_block(expr_kind: &Expr) -> bool {
     }
 }
 
-fn assignment_metaitem(lhs: &str, rhs: &str) -> NestedMeta {
-    use c2rust_ast_builder::Make;
-    let token = rhs.make(&mk());
-    let meta_item = Meta::NameValue(syn::MetaNameValue {
+fn assignment_metaitem(lhs: &str, rhs: &str) -> Meta {
+    Meta::NameValue(MetaNameValue {
         path: mk().path(lhs),
         eq_token: Default::default(),
-        lit: token,
-    });
-
-    NestedMeta::Meta(meta_item)
+        value: mk().unboxed_lit_expr(rhs),
+    })
 }
 
 impl<'a> Translation<'a> {
@@ -332,7 +326,7 @@ impl<'a> Translation<'a> {
                     let mut field = mk();
                     let field_attrs = attrs.iter().map(|attr| {
                         let ty_str = match &*attr.1 {
-                            Type::Path(syn::TypePath { path, .. }) => pprust::path_to_string(path),
+                            Type::Path(TypePath { path, .. }) => pprust::path_to_string(path),
                             _ => unreachable!("Found type other than path"),
                         };
                         let field_attr_items = vec![
@@ -357,12 +351,11 @@ impl<'a> Translation<'a> {
                         mk().lit_expr(mk().int_unsuffixed_lit(bytes.into())),
                     );
 
-                    // Mark it with `#[bitfield(padding)]`
-                    let field_padding_inner = NestedMeta::Meta(mk().meta_path("padding"));
-                    let field_padding_inner = vec![mk().nested_meta_item(field_padding_inner)];
-                    let field_padding_outer = mk().meta_list("bitfield", field_padding_inner);
                     let field = mk()
-                        .meta_item_attr(AttrStyle::Outer, field_padding_outer)
+                        .meta_item_attr(
+                            AttrStyle::Outer,
+                            mk().meta_list("bitfield", vec![mk().meta_path("padding")]),
+                        )
                         .pub_()
                         .struct_field(field_name, ty);
 
@@ -563,7 +556,7 @@ impl<'a> Translation<'a> {
 
         fields
             .into_iter()
-            .collect::<WithStmts<Vec<syn::FieldValue>>>()
+            .collect::<WithStmts<Vec<FieldValue>>>()
             .and_then(|fields| {
                 let struct_expr = mk().struct_expr(name.as_str(), fields);
                 let local_variable = Box::new(mk().local(local_pat, None, Some(struct_expr)));
@@ -677,7 +670,7 @@ impl<'a> Translation<'a> {
 
         Ok(fields
             .into_iter()
-            .collect::<WithStmts<Vec<syn::FieldValue>>>()
+            .collect::<WithStmts<Vec<FieldValue>>>()
             .map(|fields| mk().struct_expr(name.as_str(), fields)))
     }
 
@@ -771,7 +764,7 @@ impl<'a> Translation<'a> {
                         }
 
                         let last_expr = match block.stmts[last] {
-                            Stmt::Expr(ref expr) => expr.clone(),
+                            Stmt::Expr(ref expr, _) => expr.clone(),
                             _ => return Err(TranslationError::generic("Expected Expr Stmt")),
                         };
                         let method_call =

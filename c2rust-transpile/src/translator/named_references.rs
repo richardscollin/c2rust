@@ -1,8 +1,8 @@
 #![deny(missing_docs)]
 //! This module provides helper functions for generating rvalue and lvalues
 //! corresponding to a single Rust expression.
-
 use super::*;
+use syn::ExprField;
 
 /// Check if something is a valid Rust lvalue. Inspired by `librustc::ty::expr_is_lval`.
 fn is_lvalue(e: &Expr) -> bool {

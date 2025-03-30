@@ -302,8 +302,12 @@ pub fn insert_comment_attrs(attrs: &mut Vec<Attribute>, new_comments: SmallVec<[
             pound_token: Default::default(),
             style: AttrStyle::Inner(Default::default()),
             bracket_token: Default::default(),
-            path: make_comment_path(),
-            tokens,
+            meta: Meta::List(MetaList {
+                // TODO need to change this on the other end too
+                path: make_comment_path(),
+                delimiter: MacroDelimiter::Paren(syn::token::Paren(Span::call_site())),
+                tokens,
+            }),
         };
         attrs.push(attr);
     }

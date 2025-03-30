@@ -1,23 +1,24 @@
 use anyhow::anyhow;
-use clap::{crate_authors, App, AppSettings, Arg};
+use clap::{crate_authors, Arg};
 use is_executable::IsExecutable;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::process;
-use std::process::Command;
 use std::str;
 
+// ArgSettings
+
 /// A `c2rust` sub-command.
+#[derive(Clone)]
 struct SubCommand {
     /// The path to the [`SubCommand`]'s executable,
     /// if it was found (see [`Self::find_all`]).
     /// Otherwise [`None`] if it is a known [`SubCommand`] (see [`Self::known`]).
     path: Option<PathBuf>,
     /// The name of the [`SubCommand`], i.e. in `c2rust-{name}`.
-    name: Cow<'static, str>,
+    name: String,
 }
 
 impl SubCommand {
@@ -44,7 +45,6 @@ impl SubCommand {
                 .and_then(|name| name.strip_prefix(c2rust_name))
                 .and_then(|name| name.strip_prefix('-'))
                 .map(|name| name.to_owned())
-                .map(Cow::from)
                 .filter(|_| file_type.is_file() || file_type.is_symlink())
                 .filter(|_| path.is_executable());
             if let Some(name) = name {
@@ -85,16 +85,14 @@ impl SubCommand {
                 self.name
             )
         })?;
-        let status = Command::new(&path).args(args).status()?;
+        let status = std::process::Command::new(path).args(args).status()?;
         process::exit(status.code().unwrap_or(1));
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    let sub_commands = SubCommand::all()?.collect::<Vec<_>>();
-    let sub_commands = sub_commands
-        .iter()
-        .map(|cmd| (cmd.name.as_ref(), cmd))
+    let sub_commands: HashMap<String, SubCommand> = SubCommand::all()?
+        .map(|cmd| (cmd.name.to_string(), cmd))
         .collect::<HashMap<_, _>>();
 
     // If the subcommand matches, don't use `clap` at all.
@@ -119,17 +117,13 @@ fn main() -> anyhow::Result<()> {
         return sub_command.invoke(args);
     }
 
-    // If we didn't get a subcommand, then use `clap` for parsing and error/help messages.
-    let matches = App::new("C2Rust")
+    //If we didn't get a subcommand, then use `clap` for parsing and error/help messages.
+    let matches = clap::Command::new("C2Rust")
         .version(env!("CARGO_PKG_VERSION"))
         .author(crate_authors!(", "))
-        .settings(&[AppSettings::SubcommandRequiredElseHelp])
+        .subcommand_required(true)
         .subcommands(sub_commands.keys().map(|name| {
-            clap::SubCommand::with_name(name).arg(
-                Arg::with_name("args")
-                    .multiple(true)
-                    .allow_hyphen_values(true),
-            )
+            clap::Command::new(name).arg(Arg::new("args").multiple(true).allow_hyphen_values(true))
         }))
         .get_matches();
     let sub_command_name = matches

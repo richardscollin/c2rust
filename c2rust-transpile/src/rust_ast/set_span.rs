@@ -78,7 +78,18 @@ macro_rules! set_span_impl {
             }
         }
     };
+    ( struct $spanned_ty:path, delim ) => {
+        impl SetSpan for $spanned_ty {
+            fn set_span(&mut self, s: Span) {
+                self.span = $spanned_ty(s).span
+            }
+        }
+    };
 }
+
+set_span_impl!(struct ::syn::token::Brace, delim);
+set_span_impl!(struct ::syn::token::Bracket, delim);
+set_span_impl!(struct ::syn::token::Paren, delim);
 
 /* required impls:
 syn::Stmt
@@ -95,24 +106,22 @@ syn::ForeignItem
 impl SetSpan for Stmt {
     fn set_span(&mut self, s: Span) {
         match self {
-            Stmt::Expr(e) => e.set_span(s),
+            Stmt::Expr(e, _) => e.set_span(s),
             Stmt::Local(l) => l.set_span(s),
             Stmt::Item(i) => i.set_span(s),
-            Stmt::Semi(e, _) => e.set_span(s),
+            Stmt::Macro(m) => m.set_span(s),
         }
     }
 }
 
 set_span_impl!(enum Expr, s via
-    (Array => bracket_token.span = s),
+    (Array => bracket_token.set_span(s)),
     (Assign => eq_token.spans[0] = s),
-    (AssignOp => op.set_span(s)),
     (Await => await_token.span = s),
     (Binary => op.set_span(s)),
     (Block => block.set_span(s)),
-    (Box => box_token.span = s),
     (Break => break_token.span = s),
-    (Call => paren_token.span = s),
+    (Call => paren_token.set_span(s)),
     (Cast => as_token.span = s),
     (Closure => or1_token.spans[0] = s),
     (Continue => continue_token.span = s),
@@ -120,24 +129,23 @@ set_span_impl!(enum Expr, s via
     (ForLoop => for_token.span = s),
     (Group => group_token.span = s),
     (If => if_token.span = s),
-    (Index => bracket_token.span = s),
+    (Index => bracket_token.set_span(s)),
     (Let => let_token.span = s),
     (Lit => lit.set_span(s)),
     (Loop => loop_token.span = s),
     (Macro => mac.bang_token.spans[0] = s),
     (Match => match_token.span = s),
     (MethodCall => dot_token.spans[0] = s),
-    (Paren => paren_token.span = s),
+    (Paren => paren_token.set_span(s)),
     (Path => path.set_span(s)),
     (Range => limits.set_span(s)),
     (Reference => and_token.spans[0] = s),
-    (Repeat => bracket_token.span = s),
+    (Repeat => bracket_token.set_span(s)),
     (Return => return_token.span = s),
-    (Struct => brace_token.span = s),
+    (Struct => brace_token.set_span(s)),
     (Try => question_token.spans[0] = s),
     (TryBlock => try_token.span = s),
-    (Tuple => paren_token.span = s),
-    (Type => colon_token.spans[0] = s),
+    (Tuple => paren_token.set_span(s)),
     (Unary => op.set_span(s)),
     (Unsafe => unsafe_token.span = s),
     (While => while_token.span = s),
@@ -163,19 +171,25 @@ set_span_impl!(struct Signature, kw fn_token);
 
 set_span_impl!(enum TraitItem, s via
     (Const => const_token.span = s),
-    (Method => sig.set_span(s)),
+    (Fn => sig.set_span(s)),
     (Type => type_token.span = s),
     (Macro => mac.bang_token.spans[0] = s),
 );
 
 set_span_impl!(enum ImplItem, s via
     (Const => const_token.span = s),
-    (Method => sig.set_span(s)),
+    (Fn => sig.set_span(s)),
     (Type => type_token.span = s),
     (Macro => mac.bang_token.spans[0] = s),
 );
 
-set_span_impl!(struct Block, kw brace_token);
+impl SetSpan for StmtMacro {
+    fn set_span(&mut self, s: Span) {
+        self.mac.bang_token.span = s;
+    }
+}
+
+set_span_impl!(struct Block, field brace_token);
 set_span_impl!(struct Local, kw let_token);
 
 set_span_impl!(enum Member, s via
@@ -190,10 +204,9 @@ set_span_impl!(enum Item, s via
     (Enum => enum_token.span = s),
     (ExternCrate => extern_token.span = s),
     (Fn => sig.set_span(s)),
-    (ForeignMod => brace_token.span = s),
+    (ForeignMod => brace_token.set_span(s)),
     (Impl => impl_token.span = s),
     (Macro => mac.bang_token.spans[0] = s),
-    (Macro2 => macro_token.span = s),
     (Mod => mod_token.span = s),
     (Static => static_token.span = s),
     (Struct => struct_token.span = s),
@@ -213,5 +226,5 @@ set_span_impl!(enum ForeignItem, s via
 
 //lit required for expr
 
-set_span_impl!(enum BinOp, punct Add, Sub, Mul, Div, Rem, And, Or, BitXor, BitAnd, BitOr, Shl, Shr, Eq, Lt, Le, Ne, Ge, Gt, AddEq, SubEq, MulEq, DivEq, RemEq, BitXorEq, BitAndEq, BitOrEq, ShlEq, ShrEq);
+set_span_impl!(enum BinOp, punct Add, Sub, Mul, Div, Rem, And, Or, BitXor, BitAnd, BitOr, Shl, Shr, Eq, Lt, Le, Ne, Ge, Gt, AddAssign, SubAssign, MulAssign, DivAssign, RemAssign, BitXorAssign, BitAndAssign, BitOrAssign, ShlAssign, ShrAssign);
 set_span_impl!(enum UnOp, punct Deref, Not, Neg);

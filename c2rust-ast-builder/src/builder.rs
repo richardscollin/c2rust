@@ -152,7 +152,7 @@ fn use_tree_with_prefix(prefix: Path, leaf: UseTree) -> UseTree {
 }
 
 fn punct<T, P: Default>(x: Vec<T>) -> Punctuated<T, P> {
-    Punctuated::from_iter(x.into_iter())
+    Punctuated::from_iter(x)
 }
 
 fn punct_box<T, P: Default>(x: Vec<Box<T>>) -> Punctuated<T, P> {
@@ -518,10 +518,15 @@ impl Builder {
     pub fn str_attr<K, V>(self, key: K, value: V) -> Self
     where
         K: Make<Path>,
-        V: Make<Expr>,
+        V: Make<Lit>,
     {
         let key = key.make(&self);
         let value = value.make(&self);
+
+        let value = Expr::Lit(ExprLit {
+            attrs: Vec::new(),
+            lit: value.make(&self),
+        });
 
         let mnv = MetaNameValue {
             path: key,
@@ -753,6 +758,19 @@ impl Builder {
             attrs: self.attrs,
             lit,
         }))
+    }
+
+    // TODO refactor and rename these, boxed_lit_expr, and lit_expr
+    pub fn unboxed_lit_expr<L>(self, lit: L) -> Expr
+    where
+        L: Make<Lit>,
+    {
+        let mut lit = lit.make(&self);
+        lit.set_span(self.span);
+        Expr::Lit(ExprLit {
+            attrs: self.attrs,
+            lit,
+        })
     }
 
     pub fn cast_expr(self, e: Box<Expr>, t: Box<Type>) -> Box<Expr> {
@@ -1115,26 +1133,26 @@ impl Builder {
 
     // Patterns
 
-    pub fn ident_pat<I>(self, name: I) -> Box<Pat>
+    pub fn ident_pat<I>(self, name: I) -> Pat
     where
         I: Make<Ident>,
     {
         let name = name.make(&self);
-        Box::new(Pat::Ident(PatIdent {
+        Pat::Ident(PatIdent {
             attrs: self.attrs,
             mutability: self.mutbl.to_token(),
             by_ref: None,
             ident: name,
             subpat: None,
-        }))
+        })
     }
 
-    pub fn tuple_pat(self, pats: Vec<Pat>) -> Box<Pat> {
-        Box::new(Pat::Tuple(PatTuple {
+    pub fn tuple_pat(self, pats: Vec<Pat>) -> Pat {
+        Pat::Tuple(PatTuple {
             attrs: self.attrs,
             paren_token: token::Paren(self.span),
             elems: punct(pats),
-        }))
+        })
     }
 
     pub fn qpath_pat<Pa>(self, qself: Option<QSelf>, path: Pa) -> Box<Pat>
@@ -1310,12 +1328,6 @@ impl Builder {
         Box::new(Type::Macro(TypeMacro { mac }))
     }
 
-    pub fn cvar_args_ty(self) -> Box<Type> {
-        let dot = TokenTree::Punct(proc_macro2::Punct::new('.', proc_macro2::Spacing::Joint));
-        let dots = vec![dot.clone(), dot.clone(), dot];
-        Box::new(Type::Verbatim(TokenStream::from_iter(dots.into_iter())))
-    }
-
     // Stmts
 
     pub fn local_stmt(self, local: Box<Local>) -> Stmt {
@@ -1391,10 +1403,19 @@ impl Builder {
         }))
     }
 
-    pub fn variadic_arg(self, variadic_attrs: Vec<Attribute>) -> Variadic {
+    pub fn variadic_arg(self, pat: Option<Box<Pat>>, variadic_attrs: Vec<Attribute>) -> Variadic {
         Variadic {
             attrs: variadic_attrs,
-            pat: None,
+            pat: pat.map(|p| (p, Token![:](self.span))),
+            dots: Token![...](self.span),
+            comma: None,
+        }
+    }
+
+    pub fn bare_variadic(self, variadic_attrs: Vec<Attribute>) -> BareVariadic {
+        BareVariadic {
+            attrs: variadic_attrs,
+            name: None,
             dots: Token![...](self.span),
             comma: None,
         }
@@ -1988,31 +2009,37 @@ impl Builder {
         Meta::Path(path)
     }
 
-    pub fn meta_list<I, N>(self, path: I, args: Vec<TokenTree>) -> Meta
+    pub fn meta_list<I, N>(self, path: I, args: N) -> Meta
     where
         I: Make<Path>,
+        N: Make<Vec<Meta>>,
     {
         let path = path.make(&self);
+        let args = args.make(&self);
 
         Meta::List(MetaList {
             path,
             delimiter: MacroDelimiter::Paren(token::Paren(self.span)),
-            tokens: punct::<_, Token![,]>(args).to_token_stream(),
+            tokens: punct::<_, Token![,]>(
+                args.into_iter()
+                    .flat_map(|tokens| tokens.into_token_stream())
+                    .collect(),
+            )
+            .into_token_stream(),
         })
     }
 
     pub fn meta_namevalue<K, V>(self, key: K, value: V) -> Meta
     where
         K: Make<Path>,
-        V: Make<Expr>,
+        V: Make<Lit>,
     {
         let key = key.make(&self);
-        let value = value.make(&self);
 
         Meta::NameValue(MetaNameValue {
             path: key,
             eq_token: Token![=](self.span),
-            value,
+            value: self.unboxed_lit_expr(value),
         })
     }
 

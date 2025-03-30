@@ -64,7 +64,7 @@ impl<'c> Translation<'c> {
                     Some(mk().call_expr(mk().path_expr(vec!["Vec", "new"]), vec![])),
                 ))));
                 stmts.push(mk().semi_stmt(mk().for_expr(
-                    mk().ident_pat("arg"),
+                    Box::new(mk().ident_pat("arg")),
                     mk().call_expr(args_fn, vec![]),
                     mk().block(vec![mk().semi_stmt(mk().method_call_expr(
                         mk().path_expr(vec!["args"]),
@@ -134,10 +134,10 @@ impl<'c> Translation<'c> {
                 let var_name_ident = mk().ident("var_name");
                 let var_value_ident = mk().ident("var_value");
                 stmts.push(mk().semi_stmt(mk().for_expr(
-                    mk().tuple_pat(vec![
+                    Box::new(mk().tuple_pat(vec![
                         mk().ident_pat("var_name"),
                         mk().ident_pat("var_value"),
-                    ]),
+                    ])),
                     mk().call_expr(vars_fn, vec![]),
                     mk().block(vec![
                         mk().local_stmt(Box::new(

@@ -180,7 +180,7 @@ impl<'c> Translation<'c> {
         if self.ast_context.resolve_type_id(compute_lhs_ty.ctype)
             == self.ast_context.resolve_type_id(lhs_ty.ctype)
         {
-            Ok(WithStmts::new_val(mk().assign_op_expr(
+            Ok(WithStmts::new_val(mk().binary_expr(
                 bin_op_kind,
                 write,
                 rhs,
@@ -455,16 +455,16 @@ impl<'c> Translation<'c> {
                                 }
 
                                 let (bin_op, bin_op_kind) = match op {
-                                    AssignAdd => (Add, eq(BinOp::AddEq)),
-                                    AssignSubtract => (Subtract, eq(BinOp::SubEq)),
-                                    AssignMultiply => (Multiply, eq(BinOp::MulEq)),
-                                    AssignDivide => (Divide, eq(BinOp::DivEq)),
-                                    AssignModulus => (Modulus, eq(BinOp::RemEq)),
-                                    AssignBitXor => (BitXor, eq(BinOp::BitXorEq)),
-                                    AssignShiftLeft => (ShiftLeft, eq(BinOp::ShlEq)),
-                                    AssignShiftRight => (ShiftRight, eq(BinOp::ShrEq)),
-                                    AssignBitOr => (BitOr, eq(BinOp::BitOrEq)),
-                                    AssignBitAnd => (BitAnd, eq(BinOp::BitAndEq)),
+                                    AssignAdd => (Add, eq(BinOp::AddAssign)),
+                                    AssignSubtract => (Subtract, eq(BinOp::SubAssign)),
+                                    AssignMultiply => (Multiply, eq(BinOp::MulAssign)),
+                                    AssignDivide => (Divide, eq(BinOp::DivAssign)),
+                                    AssignModulus => (Modulus, eq(BinOp::RemAssign)),
+                                    AssignBitXor => (BitXor, eq(BinOp::BitXorAssign)),
+                                    AssignShiftLeft => (ShiftLeft, eq(BinOp::ShlAssign)),
+                                    AssignShiftRight => (ShiftRight, eq(BinOp::ShrAssign)),
+                                    AssignBitOr => (BitOr, eq(BinOp::BitOrAssign)),
+                                    AssignBitAnd => (BitAnd, eq(BinOp::BitAndAssign)),
                                     _ => panic!("Cannot convert non-assignment operator"),
                                 };
                                 self.convert_assignment_operator_aux(
@@ -950,7 +950,9 @@ impl<'c> Translation<'c> {
         // to add them to stmts.
         if ctx.is_unused() {
             let v = unary.clone().into_value();
-            unary.stmts_mut().push(Stmt::Semi(*v, Default::default()));
+            unary
+                .stmts_mut()
+                .push(Stmt::Expr(*v, Some(Token![;](Span::call_site())))); // TODO fix this span
         }
         Ok(unary)
     }
